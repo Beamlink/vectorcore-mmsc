@@ -40,6 +40,9 @@ type MM1Config struct {
 	DeliveryReportPolicy string `yaml:"delivery_report_policy"`
 	// TrustMSISDNHeader makes a proxy-set MSISDN header override the PDU From.
 	TrustMSISDNHeader bool `yaml:"trust_msisdn_header"`
+	// StripRecipientPrefixes are removed from recipient numbers before routing,
+	// e.g. "+1" when handsets add it but subscribers are stored without it.
+	StripRecipientPrefixes []string `yaml:"strip_recipient_prefixes"`
 }
 
 type MM3Config struct {

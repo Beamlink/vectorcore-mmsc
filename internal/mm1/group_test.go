@@ -216,3 +216,14 @@ func TestSameNumber(t *testing.T) {
 		}
 	}
 }
+
+func TestStripRecipientPrefixes(t *testing.T) {
+	got := stripPrefixes([]string{"+19820288882", "9016399992", "+1", "+1x@example.com", "+691123"}, []string{"+1"})
+	want := []string{"9820288882", "9016399992", "+1", "+1x@example.com", "+691123"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("stripPrefixes = %v, want %v", got, want)
+	}
+	if got := stripPrefixes([]string{"+19820288882"}, nil); got[0] != "+19820288882" {
+		t.Fatalf("no prefixes configured must leave numbers alone, got %v", got)
+	}
+}

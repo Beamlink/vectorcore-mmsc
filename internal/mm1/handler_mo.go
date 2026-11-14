@@ -187,9 +187,10 @@ func (h *MOHandler) toMessage(ctx context.Context, r *http.Request, pdu *mmspdu.
 	if err != nil {
 		return nil, nil, fmt.Errorf("missing from: %w", err)
 	}
-	to := addressList(pdu, mmspdu.FieldTo)
-	cc := addressList(pdu, mmspdu.FieldCC)
-	bcc := addressList(pdu, mmspdu.FieldBCC)
+	prefixes := h.cfg.MM1.StripRecipientPrefixes
+	to := stripPrefixes(addressList(pdu, mmspdu.FieldTo), prefixes)
+	cc := stripPrefixes(addressList(pdu, mmspdu.FieldCC), prefixes)
+	bcc := stripPrefixes(addressList(pdu, mmspdu.FieldBCC), prefixes)
 	if len(to)+len(cc)+len(bcc) == 0 {
 		return nil, nil, fmt.Errorf("missing to: header missing")
 	}
@@ -448,6 +449,27 @@ func (h *MOHandler) persistLocalContent(ctx context.Context, msg *message.Messag
 	msg.StoreID = contentPath
 	msg.MessageSize = int64(len(raw))
 	return nil
+}
+
+// stripPrefixes removes the first matching prefix from each phone number.
+// Email addresses and numbers that would be left empty are kept as they are.
+func stripPrefixes(addrs []string, prefixes []string) []string {
+	if len(prefixes) == 0 {
+		return addrs
+	}
+	out := make([]string, 0, len(addrs))
+	for _, addr := range addrs {
+		if !strings.Contains(addr, "@") {
+			for _, prefix := range prefixes {
+				if prefix != "" && strings.HasPrefix(addr, prefix) && len(addr) > len(prefix) {
+					addr = addr[len(prefix):]
+					break
+				}
+			}
+		}
+		out = append(out, addr)
+	}
+	return out
 }
 
 // addressList returns every address in a repeatable header, minus /TYPE= suffixes.
