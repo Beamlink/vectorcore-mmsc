@@ -33,6 +33,7 @@ func FuzzDecode(f *testing.F) {
 		f.Add(data)
 	}
 	f.Add([]byte{})
+	f.Add(rawPDU(CmdAlertNotification, 4, []byte("\x01\x01+12025550100\x00\x00\x00\x00")))
 	oversized := make([]byte, headerLen)
 	binary.BigEndian.PutUint32(oversized[:4], maxCommandLength+1)
 	f.Add(oversized)

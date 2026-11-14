@@ -16,10 +16,12 @@ const (
 	CmdEnquireLinkResp     uint32 = 0x80000015
 	CmdUnbindResp          uint32 = 0x80000006
 	CmdGenericNack         uint32 = 0x80000000
+	CmdAlertNotification   uint32 = 0x00000102
 )
 
 const (
 	ESMEROK        uint32 = 0x00000000
+	ESMERINVCMDID  uint32 = 0x00000003
 	ESMERINVBNDSTS uint32 = 0x00000004
 	ESMERSYSERR    uint32 = 0x00000008
 	ESMERINVDSTADR uint32 = 0x0000000B
@@ -36,6 +38,8 @@ type PDU struct {
 	CommandID      uint32
 	CommandStatus  uint32
 	SequenceNumber uint32
+	// RawBody holds the undecoded body of a command this package does not parse.
+	RawBody []byte
 
 	SystemID         string
 	Password         string
