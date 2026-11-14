@@ -5,15 +5,16 @@ func NewSendReq(transactionID, from string, to []string) *PDU {
 		FieldFrom:          NewFromValue(from),
 		FieldTransactionID: NewTextValue(FieldTransactionID, transactionID),
 	}
-	if len(to) > 0 {
-		headers[FieldTo] = NewAddressValue(FieldTo, to[0])
-	}
-	return &PDU{
+	pdu := &PDU{
 		MessageType:   MsgTypeSendReq,
 		TransactionID: transactionID,
 		MMSVersion:    "1.3",
 		Headers:       headers,
 	}
+	for _, addr := range to {
+		pdu.AddAddress(FieldTo, addr)
+	}
+	return pdu
 }
 
 func NewSendReqWithParts(transactionID, from string, to []string, parts []Part) *PDU {

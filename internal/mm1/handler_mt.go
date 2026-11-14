@@ -79,8 +79,12 @@ func (h *MTHandler) HandleRetrieve(w http.ResponseWriter, r *http.Request) {
 		from = "#insert"
 	}
 	pdu.Headers[mmspdu.FieldFrom] = mmspdu.NewFromValue(from)
-	if len(msg.To) > 0 {
-		pdu.Headers[mmspdu.FieldTo] = mmspdu.NewAddressValue(mmspdu.FieldTo, msg.To[0])
+	// List To and Cc so handsets thread group messages; Bcc stays hidden.
+	for _, addr := range msg.To {
+		pdu.AddAddress(mmspdu.FieldTo, addr)
+	}
+	for _, addr := range msg.CC {
+		pdu.AddAddress(mmspdu.FieldCC, addr)
 	}
 	if !msg.ReceivedAt.IsZero() {
 		pdu.Headers[mmspdu.FieldDate] = mmspdu.NewDateValue(mmspdu.FieldDate, msg.ReceivedAt)

@@ -93,7 +93,7 @@ func (d *Dispatcher) dispatchQueued(ctx context.Context) {
 }
 
 func (d *Dispatcher) dispatchLocalNotification(ctx context.Context, msg *message.Message) error {
-	if msg == nil || len(msg.To) == 0 {
+	if msg == nil || len(msg.Recipients()) == 0 {
 		return nil
 	}
 	notification := mmspdu.NewNotificationInd(msg.TransactionID, d.contentLocation(msg.ID))
@@ -115,7 +115,7 @@ func (d *Dispatcher) dispatchLocalNotification(ctx context.Context, msg *message
 		return err
 	}
 	pushPDU := mmspdu.WrapWAPPush(encoded)
-	for _, recipient := range msg.To {
+	for _, recipient := range msg.Recipients() {
 		if tracked, ok := d.push.(trackedPushSender); ok {
 			if err := tracked.SubmitWAPPushForMessage(ctx, msg.ID, msg.From, recipient, pushPDU); err != nil {
 				return err
