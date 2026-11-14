@@ -131,3 +131,88 @@ func TestTrustedMSISDNHeaderOverridesPDUFrom(t *testing.T) {
 		}
 	}
 }
+
+func TestRetrieveOmitsRetrievingHandset(t *testing.T) {
+	cfg := config.Default()
+	cfg.MM1.TrustMSISDNHeader = true
+	cfg.Database.Driver = "sqlite"
+	cfg.Database.DSN = t.TempDir() + "/mm1-self.db"
+	cfg.Store.Backend = "filesystem"
+	cfg.Store.Filesystem.Root = t.TempDir()
+
+	ctx := context.Background()
+	repo, err := db.Open(ctx, db.OpenOptions{Driver: cfg.Database.Driver, DSN: cfg.Database.DSN})
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	defer repo.Close()
+	runMM1TestMigrations(t, repo)
+	contentStore, err := store.New(ctx, cfg.Store)
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	defer contentStore.Close()
+	server := NewServer(cfg, repo, contentStore, routing.NewEngine(repo), nil, nil, nil, nil)
+
+	raw, err := mmspdu.Encode(mmspdu.NewRetrieveConf("txn-self", []mmspdu.Part{{ContentType: "text/plain", Data: []byte("hi")}}))
+	if err != nil {
+		t.Fatalf("encode content: %v", err)
+	}
+	path, err := contentStore.Put(ctx, "mid-self", bytes.NewReader(raw), int64(len(raw)), "application/vnd.wap.mms-message")
+	if err != nil {
+		t.Fatalf("store content: %v", err)
+	}
+	for _, msg := range []*message.Message{
+		{ID: "mid-self", TransactionID: "txn-self", From: "9016399992", To: []string{"9820288882"},
+			ContentPath: path, StoreID: path, Parts: []message.Part{{ContentType: "text/plain", Data: []byte("hi")}}},
+		{ID: "mid-group", TransactionID: "txn-group", From: "9016399992", To: []string{"9820288882", "9910199993"},
+			CC: []string{"9910199996"}, ContentPath: path, StoreID: path, Parts: []message.Part{{ContentType: "text/plain", Data: []byte("hi")}}},
+	} {
+		if err := repo.CreateMessage(ctx, msg); err != nil {
+			t.Fatalf("create %s: %v", msg.ID, err)
+		}
+	}
+
+	retrieve := func(id, self string) *mmspdu.PDU {
+		req := httptest.NewRequest(http.MethodGet, "/mms/retrieve?id="+id, nil)
+		req.Header.Set("X-MSISDN", self)
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("retrieve %s: %d %s", id, rec.Code, rec.Body.String())
+		}
+		pdu, err := mmspdu.Decode(rec.Body.Bytes())
+		if err != nil {
+			t.Fatalf("decode %s: %v", id, err)
+		}
+		return pdu
+	}
+
+	if n := len(retrieve("mid-self", "9820288882").AddressValues(mmspdu.FieldTo)); n != 0 {
+		t.Fatalf("1:1 retrieve listed %d To addresses, want 0 (self omitted)", n)
+	}
+	group := retrieve("mid-group", "+19820288882")
+	if n := len(group.AddressValues(mmspdu.FieldTo)); n != 1 {
+		t.Fatalf("group retrieve To count %d, want 1", n)
+	}
+	if n := len(group.AddressValues(mmspdu.FieldCC)); n != 1 {
+		t.Fatalf("group retrieve Cc count %d, want 1", n)
+	}
+}
+
+func TestSameNumber(t *testing.T) {
+	for _, tc := range []struct {
+		a, b string
+		want bool
+	}{
+		{"9820288882", "9820288882", true},
+		{"+19820288882/TYPE=PLMN", "9820288882", true},
+		{"9820288882", "9820288883", false},
+		{"123", "0123", false},
+		{"9820288882", "", false},
+	} {
+		if got := sameNumber(tc.a, tc.b); got != tc.want {
+			t.Errorf("sameNumber(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
+		}
+	}
+}
