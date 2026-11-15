@@ -42,7 +42,7 @@ func NewOutbound(runtime *config.RuntimeStore, hostname string) *Outbound {
 }
 
 func (o *Outbound) Send(ctx context.Context, msg *message.Message) error {
-	if msg == nil || len(msg.To) == 0 {
+	if msg == nil || len(msg.Recipients()) == 0 {
 		return fmt.Errorf("mm3: missing recipients")
 	}
 	if o.runtime == nil {
@@ -60,7 +60,8 @@ func (o *Outbound) Send(ctx context.Context, msg *message.Message) error {
 	if err != nil {
 		return err
 	}
-	return o.sendOnce(ctx, relay, mailFrom, msg.To, envelope)
+	// SMTP recipients include Cc and Bcc; Bcc never appears in the headers.
+	return o.sendOnce(ctx, relay, mailFrom, msg.Recipients(), envelope)
 }
 
 func EncodeEnvelope(msg *message.Message, relay db.MM3Relay, hostname string) ([]byte, string, error) {
@@ -97,7 +98,12 @@ func EncodeEnvelope(msg *message.Message, relay db.MM3Relay, hostname string) ([
 
 	var out bytes.Buffer
 	fmt.Fprintf(&out, "From: %s\r\n", mailFrom)
-	fmt.Fprintf(&out, "To: %s\r\n", strings.Join(msg.To, ","))
+	if len(msg.To) > 0 {
+		fmt.Fprintf(&out, "To: %s\r\n", strings.Join(msg.To, ","))
+	}
+	if len(msg.CC) > 0 {
+		fmt.Fprintf(&out, "Cc: %s\r\n", strings.Join(msg.CC, ","))
+	}
 	if msg.Subject != "" {
 		fmt.Fprintf(&out, "Subject: %s\r\n", msg.Subject)
 	}

@@ -253,8 +253,11 @@ func (s *InboundServer) handleDATA(ctx context.Context, conn net.Conn, mailFrom 
 	if msg.From == "" {
 		msg.From = stripType(mailFrom)
 	}
-	if len(msg.To) == 0 {
+	if len(msg.To) == 0 && len(msg.CC) == 0 {
 		msg.To = normalizeRecipients(rcpts)
+	} else {
+		// Envelope recipients named in no header were blind-copied.
+		msg.BCC = envelopeOnlyRecipients(rcpts, msg.To, msg.CC)
 	}
 	if msg.ID == "" {
 		msg.ID = routing.NewMessageID()
@@ -454,7 +457,7 @@ func (s *InboundServer) authenticateSMTPPlain(cmd string) (*db.MM4Peer, error) {
 }
 
 func (s *InboundServer) dispatchLocalNotification(ctx context.Context, msg *message.Message, result *routing.Result) error {
-	if s.push == nil || len(msg.To) == 0 {
+	if s.push == nil || len(msg.Recipients()) == 0 {
 		return nil
 	}
 	if result == nil || result.Destination != routing.DestinationLocal {
@@ -483,7 +486,7 @@ func (s *InboundServer) dispatchLocalNotification(ctx context.Context, msg *mess
 		return err
 	}
 	push := mmspdu.WrapWAPPush(encoded)
-	for _, recipient := range msg.To {
+	for _, recipient := range msg.Recipients() {
 		if tracked, ok := s.push.(trackedPushSender); ok {
 			if err := tracked.SubmitWAPPushForMessage(ctx, msg.ID, msg.From, recipient, push); err != nil {
 				return err
@@ -522,10 +525,29 @@ func mm4NotificationExpirySeconds(expiry *time.Time) uint64 {
 }
 
 func (s *InboundServer) resolveRoute(ctx context.Context, msg *message.Message) (*routing.Result, error) {
-	if len(msg.To) == 0 {
+	recipients := msg.Recipients()
+	if len(recipients) == 0 {
 		return nil, nil
 	}
-	return s.router.ResolveRecipients(ctx, msg.To)
+	return s.router.ResolveRecipients(ctx, recipients)
+}
+
+// envelopeOnlyRecipients returns the SMTP recipients absent from the To and Cc headers.
+func envelopeOnlyRecipients(rcpts, to, cc []string) []string {
+	seen := make(map[string]struct{}, len(to)+len(cc))
+	for _, list := range [][]string{to, cc} {
+		for _, addr := range list {
+			seen[addr] = struct{}{}
+		}
+	}
+	var out []string
+	for _, addr := range normalizeRecipients(rcpts) {
+		if _, ok := seen[addr]; !ok {
+			seen[addr] = struct{}{}
+			out = append(out, addr)
+		}
+	}
+	return out
 }
 
 func (s *InboundServer) applyAdaptation(ctx context.Context, msg *message.Message, result *routing.Result) error {

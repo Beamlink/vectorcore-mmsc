@@ -52,21 +52,23 @@ func (o *Outbound) SetEnvelopeOptions(from string, recipientDomain string, reque
 }
 
 func (o *Outbound) Send(ctx context.Context, msg *message.Message) error {
-	if msg == nil || len(msg.To) == 0 {
+	if msg == nil || len(msg.Recipients()) == 0 {
 		return fmt.Errorf("mm4: missing recipients")
 	}
+	// Relay to To, Cc and Bcc alike; all of them share one peer (checked at routing).
+	recipients := msg.Recipients()
 
 	envelope, err := EncodeEnvelopeWithOptions(msg, o.hostname, EnvelopeOptions{AckRequest: o.requestForwardAck})
 	if err != nil {
 		return err
 	}
 
-	peer, configured, err := o.router.ResolvePeer(ctx, msg.To[0])
+	peer, configured, err := o.router.ResolvePeer(ctx, recipients[0])
 	if err != nil {
 		return err
 	}
 	if !configured {
-		host, port, err := o.router.Resolve(ctx, msg.To[0])
+		host, port, err := o.router.Resolve(ctx, recipients[0])
 		if err != nil {
 			return err
 		}
@@ -82,11 +84,11 @@ func (o *Outbound) Send(ctx context.Context, msg *message.Message) error {
 			Source:    "mm4",
 			Type:      "relay-attempt",
 			Summary:   "MM4 relay queued",
-			Detail:    fmt.Sprintf("peer=%s:%d recipient=%s", peer.SMTPHost, peer.SMTPPort, msg.To[0]),
+			Detail:    fmt.Sprintf("peer=%s:%d recipient=%s", peer.SMTPHost, peer.SMTPPort, recipients[0]),
 		})
 	}
 
-	return o.SendEnvelope(ctx, peer, envelope, o.smtpEnvelopeFrom(msg.From), o.smtpEnvelopeRecipients(msg.To))
+	return o.SendEnvelope(ctx, peer, envelope, o.smtpEnvelopeFrom(msg.From), o.smtpEnvelopeRecipients(recipients))
 }
 
 func (o *Outbound) SendForwardResponse(ctx context.Context, msg *message.Message, statusCode string) error {
