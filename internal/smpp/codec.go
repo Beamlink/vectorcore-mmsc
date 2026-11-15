@@ -103,7 +103,10 @@ func encodeBody(pdu *PDU) ([]byte, error) {
 		writeCString(&buf, pdu.MessageID)
 	case CmdEnquireLink, CmdEnquireLinkResp, CmdUnbind, CmdUnbindResp, CmdGenericNack:
 	default:
-		return nil, fmt.Errorf("smpp: unsupported command id 0x%08x", pdu.CommandID)
+		if pdu.RawBody == nil {
+			return nil, fmt.Errorf("smpp: unsupported command id 0x%08x", pdu.CommandID)
+		}
+		buf.Write(pdu.RawBody)
 	}
 
 	return buf.Bytes(), nil
@@ -202,7 +205,8 @@ func decodeBody(pdu *PDU, body []byte) error {
 		}
 	case CmdEnquireLink, CmdEnquireLinkResp, CmdUnbind, CmdUnbindResp, CmdGenericNack:
 	default:
-		return fmt.Errorf("smpp: unsupported command id 0x%08x", pdu.CommandID)
+		// Keep other bodies raw; the session answers or ignores the command.
+		pdu.RawBody = append([]byte{}, body...)
 	}
 
 	return nil

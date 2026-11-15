@@ -56,6 +56,25 @@ type Message struct {
 	UpdatedAt  time.Time
 }
 
+// Recipients returns To, Cc and Bcc without duplicates, in that order.
+func (m Message) Recipients() []string {
+	out := make([]string, 0, len(m.To)+len(m.CC)+len(m.BCC))
+	seen := make(map[string]struct{}, cap(out))
+	for _, list := range [][]string{m.To, m.CC, m.BCC} {
+		for _, addr := range list {
+			if addr == "" {
+				continue
+			}
+			if _, ok := seen[addr]; ok {
+				continue
+			}
+			seen[addr] = struct{}{}
+			out = append(out, addr)
+		}
+	}
+	return out
+}
+
 func (m Message) Clone() Message {
 	cloned := m
 	cloned.To = append([]string(nil), m.To...)

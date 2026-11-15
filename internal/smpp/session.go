@@ -267,6 +267,10 @@ func (s *Session) readLoop(conn *Conn) {
 func (s *Session) handleIncoming(conn *Conn, pdu *PDU) bool {
 	log := zap.L().With(zap.String("interface", "smpp"), zap.String("host", s.cfg.Host), zap.Int("port", s.cfg.Port), zap.String("system_id", s.cfg.SystemID))
 	switch pdu.CommandID {
+	case CmdAlertNotification:
+		// SMSC says a subscriber is reachable again; it has no response PDU.
+		log.Debug("smpp alert_notification ignored", zap.Uint32("sequence_number", pdu.SequenceNumber))
+		return true
 	case CmdEnquireLink:
 		log.Debug("smpp enquire_link received", zap.Uint32("sequence_number", pdu.SequenceNumber))
 		go func() {
@@ -313,7 +317,18 @@ func (s *Session) handleIncoming(conn *Conn, pdu *PDU) bool {
 		}()
 		return true
 	default:
-		return false
+		if pdu.CommandID&CmdGenericNack != 0 {
+			return false // a response: matched to its pending request
+		}
+		log.Debug("smpp unsupported request nacked", zap.Uint32("command_id", pdu.CommandID), zap.Uint32("sequence_number", pdu.SequenceNumber))
+		go func() {
+			_ = conn.WritePDU(&PDU{
+				CommandID:      CmdGenericNack,
+				CommandStatus:  ESMERINVCMDID,
+				SequenceNumber: pdu.SequenceNumber,
+			})
+		}()
+		return true
 	}
 }
 

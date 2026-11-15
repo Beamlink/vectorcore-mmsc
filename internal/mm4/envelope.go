@@ -72,7 +72,12 @@ func EncodeEnvelopeWithOptions(msg *message.Message, originHost string, opts Env
 
 	header := textproto.MIMEHeader{}
 	header.Set("From", msg.From)
-	header.Set("To", strings.Join(msg.To, ","))
+	if len(msg.To) > 0 {
+		header.Set("To", strings.Join(msg.To, ","))
+	}
+	if len(msg.CC) > 0 {
+		header.Set("Cc", strings.Join(msg.CC, ","))
+	}
 	header.Set("MIME-Version", "1.0")
 	header.Set("Content-Type", "multipart/related; boundary="+writer.Boundary())
 	header.Set("X-Mms-3GPP-MMS-Version", mm4Version)
@@ -81,7 +86,12 @@ func EncodeEnvelopeWithOptions(msg *message.Message, originHost string, opts Env
 	header.Set("X-Mms-Message-ID", msg.ID)
 	header.Set("X-Mms-Originator-System", fmt.Sprintf("system=%s;party=%s", originHost, msg.From))
 	header.Set("X-Mms-Sender-Address", withPLMN(msg.From))
-	header.Set("X-Mms-To", joinedRecipientsWithPLMN(msg.To))
+	if len(msg.To) > 0 {
+		header.Set("X-Mms-To", joinedRecipientsWithPLMN(msg.To))
+	}
+	if len(msg.CC) > 0 {
+		header.Set("X-Mms-Cc", joinedRecipientsWithPLMN(msg.CC))
+	}
 	if msg.Subject != "" {
 		header.Set("Subject", msg.Subject)
 	}
@@ -182,6 +192,7 @@ func DecodeEnvelopeWithMeta(data []byte) (*message.Message, *EnvelopeMeta, error
 		TransactionID:  msg.Header.Get("X-Mms-Transaction-ID"),
 		From:           stripType(msg.Header.Get("X-Mms-Sender-Address")),
 		To:             splitRecipients(msg.Header.Get("X-Mms-To")),
+		CC:             splitRecipients(msg.Header.Get("X-Mms-Cc")),
 		Subject:        msg.Header.Get("Subject"),
 		ContentType:    mediaType,
 		MMSVersion:     "1.3",

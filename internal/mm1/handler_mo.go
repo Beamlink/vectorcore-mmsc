@@ -111,7 +111,7 @@ func (h *MOHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 	log = log.With(zap.String("message_id", msg.ID))
 	if routeResult != nil {
-		log.Debug("mm1 mo route resolved", zap.String("destination", routeResult.Destination.String()), zap.Strings("recipients", msg.To))
+		log.Debug("mm1 mo route resolved", zap.String("destination", routeResult.Destination.String()), zap.Strings("recipients", msg.Recipients()))
 	}
 	if err := h.applyAdaptation(r.Context(), msg, routeResult); err != nil {
 		log.Debug("mm1 mo adaptation failed", zap.Error(err))
@@ -187,9 +187,12 @@ func (h *MOHandler) toMessage(ctx context.Context, r *http.Request, pdu *mmspdu.
 	if err != nil {
 		return nil, nil, fmt.Errorf("missing from: %w", err)
 	}
-	to, err := headerText(pdu, mmspdu.FieldTo)
-	if err != nil {
-		return nil, nil, fmt.Errorf("missing to: %w", err)
+	prefixes := h.cfg.MM1.StripRecipientPrefixes
+	to := stripPrefixes(addressList(pdu, mmspdu.FieldTo), prefixes)
+	cc := stripPrefixes(addressList(pdu, mmspdu.FieldCC), prefixes)
+	bcc := stripPrefixes(addressList(pdu, mmspdu.FieldBCC), prefixes)
+	if len(to)+len(cc)+len(bcc) == 0 {
+		return nil, nil, fmt.Errorf("missing to: header missing")
 	}
 
 	messageID := routing.NewMessageID()
@@ -198,7 +201,7 @@ func (h *MOHandler) toMessage(ctx context.Context, r *http.Request, pdu *mmspdu.
 		return nil, nil, fmt.Errorf("store payload: %w", err)
 	}
 
-	recipients := []string{stripTypeSuffix(to)}
+	recipients := message.Message{To: to, CC: cc, BCC: bcc}.Recipients()
 	result, err := h.router.ResolveRecipients(ctx, recipients)
 	if err != nil {
 		return nil, nil, fmt.Errorf("route message: %w", err)
@@ -217,7 +220,9 @@ func (h *MOHandler) toMessage(ctx context.Context, r *http.Request, pdu *mmspdu.
 		Status:        status,
 		Direction:     message.DirectionMO,
 		From:          stripTypeSuffix(from),
-		To:            recipients,
+		To:            to,
+		CC:            cc,
+		BCC:           bcc,
 		ContentType:   contentTypeOf(pdu),
 		MMSVersion:    pdu.MMSVersion,
 		MessageSize:   int64(len(raw)),
@@ -252,6 +257,12 @@ func (h *MOHandler) toMessage(ctx context.Context, r *http.Request, pdu *mmspdu.
 }
 
 func (h *MOHandler) senderAddressFromRequest(r *http.Request, pdu *mmspdu.PDU) (string, error) {
+	// Behind a header-enriching proxy the network-asserted number wins.
+	if h.cfg != nil && h.cfg.MM1.TrustMSISDNHeader {
+		if headerValue := msisdnFromHTTPHeaders(r); headerValue != "" {
+			return headerValue, nil
+		}
+	}
 	if pdu != nil {
 		if value, ok := pdu.Headers[mmspdu.FieldFrom]; ok {
 			if text, err := value.Text(); err == nil {
@@ -283,7 +294,7 @@ func msisdnFromHTTPHeaders(r *http.Request) string {
 }
 
 func (h *MOHandler) dispatchLocalNotification(ctx context.Context, msg *message.Message, result *routing.Result) error {
-	if result == nil || result.Destination != routing.DestinationLocal || h.smpp == nil || len(msg.To) == 0 {
+	if result == nil || result.Destination != routing.DestinationLocal || h.smpp == nil || len(msg.Recipients()) == 0 {
 		return nil
 	}
 
@@ -311,7 +322,7 @@ func (h *MOHandler) dispatchLocalNotification(ctx context.Context, msg *message.
 		return err
 	}
 	push := mmspdu.WrapWAPPush(encoded)
-	for _, recipient := range msg.To {
+	for _, recipient := range msg.Recipients() {
 		if tracked, ok := h.smpp.(trackedPushSender); ok {
 			if err := tracked.SubmitWAPPushForMessage(ctx, msg.ID, msg.From, recipient, push); err != nil {
 				return err
@@ -331,7 +342,7 @@ func (h *MOHandler) dispatchLocalNotification(ctx context.Context, msg *message.
 		Source:    "dispatch",
 		Type:      "local-notification-submitted",
 		Summary:   "Local notification submitted",
-		Detail:    strings.Join(msg.To, ","),
+		Detail:    strings.Join(msg.Recipients(), ","),
 	})
 	return nil
 }
@@ -438,6 +449,42 @@ func (h *MOHandler) persistLocalContent(ctx context.Context, msg *message.Messag
 	msg.StoreID = contentPath
 	msg.MessageSize = int64(len(raw))
 	return nil
+}
+
+// stripPrefixes removes the first matching prefix from each phone number.
+// Email addresses and numbers that would be left empty are kept as they are.
+func stripPrefixes(addrs []string, prefixes []string) []string {
+	if len(prefixes) == 0 {
+		return addrs
+	}
+	out := make([]string, 0, len(addrs))
+	for _, addr := range addrs {
+		if !strings.Contains(addr, "@") {
+			for _, prefix := range prefixes {
+				if prefix != "" && strings.HasPrefix(addr, prefix) && len(addr) > len(prefix) {
+					addr = addr[len(prefix):]
+					break
+				}
+			}
+		}
+		out = append(out, addr)
+	}
+	return out
+}
+
+// addressList returns every address in a repeatable header, minus /TYPE= suffixes.
+func addressList(pdu *mmspdu.PDU, field byte) []string {
+	var out []string
+	for _, value := range pdu.AddressValues(field) {
+		text, err := value.Text()
+		if err != nil {
+			continue
+		}
+		if addr := stripTypeSuffix(strings.TrimSpace(text)); addr != "" {
+			out = append(out, addr)
+		}
+	}
+	return out
 }
 
 func headerText(pdu *mmspdu.PDU, field byte) (string, error) {

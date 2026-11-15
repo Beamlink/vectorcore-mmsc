@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 
 	"go.uber.org/zap"
 
@@ -79,8 +80,22 @@ func (h *MTHandler) HandleRetrieve(w http.ResponseWriter, r *http.Request) {
 		from = "#insert"
 	}
 	pdu.Headers[mmspdu.FieldFrom] = mmspdu.NewFromValue(from)
-	if len(msg.To) > 0 {
-		pdu.Headers[mmspdu.FieldTo] = mmspdu.NewAddressValue(mmspdu.FieldTo, msg.To[0])
+	// List To and Cc so handsets thread group messages; Bcc stays hidden.
+	// The retrieving handset itself is left out: phones that don't recognize
+	// their own number would otherwise show a 1:1 message as a group.
+	self := ""
+	if h.cfg != nil && h.cfg.MM1.TrustMSISDNHeader {
+		self = msisdnFromHTTPHeaders(r)
+	}
+	for _, addr := range msg.To {
+		if !sameNumber(addr, self) {
+			pdu.AddAddress(mmspdu.FieldTo, addr)
+		}
+	}
+	for _, addr := range msg.CC {
+		if !sameNumber(addr, self) {
+			pdu.AddAddress(mmspdu.FieldCC, addr)
+		}
 	}
 	if !msg.ReceivedAt.IsZero() {
 		pdu.Headers[mmspdu.FieldDate] = mmspdu.NewDateValue(mmspdu.FieldDate, msg.ReceivedAt)
@@ -274,4 +289,29 @@ func partsToPDU(parts []message.Part) []mmspdu.Part {
 		})
 	}
 	return out
+}
+
+// sameNumber reports whether two addresses are the same phone number, ignoring
+// formatting and a country-code prefix on one side.
+func sameNumber(a, b string) bool {
+	digits := func(s string) string {
+		var out []byte
+		for i := 0; i < len(s); i++ {
+			if s[i] >= '0' && s[i] <= '9' {
+				out = append(out, s[i])
+			}
+		}
+		return string(out)
+	}
+	da, db := digits(stripTypeSuffix(a)), digits(stripTypeSuffix(b))
+	if da == "" || db == "" {
+		return false
+	}
+	if da == db {
+		return true
+	}
+	if len(da) < 7 || len(db) < 7 {
+		return false
+	}
+	return strings.HasSuffix(da, db) || strings.HasSuffix(db, da)
 }
